@@ -1,0 +1,27 @@
+# Services.yaml for ha_introspection integration
+
+do_introspection:
+  name: Do Introspection
+  description: Do Introspection
+  fields:
+    statement:
+      name: Statement
+      description: Statement to exec prior to eval
+      required: false
+      example: ["python code..."]
+      selector:
+        text:
+    expression:
+      name: Expression
+      description: Expression to evaluate
+      required: true
+      example: ["python code..."]
+      selector:
+        text:
+    limit:
+      name: Limit
+      description: Limit bytes to return (default 2550)
+      required: false
+      example: [65000]
+      selector:
+        number:
