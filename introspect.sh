@@ -1,3 +1,11 @@
+verbose=0
+
+if [ "$1" = "-v" ]
+then
+    verbose=1
+    shift
+fi
+
 HA_HOST="$1"
 token="$2"
 
@@ -29,12 +37,18 @@ def fmt(a):
 expr=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/"/\\\"/g' -e "s/,/\\\,/g" <<<"$3" )
 lib=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/"/\\\"/g' -e "s/,/\\\,/g" <<<"$lib" )
 
-fetch="{% for i in range(1+states.introspection.len.state|int) %}{{  states.introspection['result_' ~ i]['state'] }}{% endfor %}"
+fetch="{% for i in range(1+states.introspection.len.state|int) %}{{ states.introspection['result_' ~ i]['state'] }}{% endfor %}"
+details="fetched {{ states.introspection.len.state }}x255 buffers, total_len={{states.introspection.total_len.state }}, truncated={{states.introspection.truncated.state }}"
 
 hass-cli -o json -x -s http://$HA_HOST:8123 --token $token service call ha_introspection.do_introspection --arguments statement="$lib",expression="$expr" >/dev/null
 [ "$?" = "0" ] || exit
+
 hass-cli -o json -x -s http://$HA_HOST:8123 --token $token template <(echo "$fetch")
 
+if [ "$verbose" = "1" ]
+then
+    hass-cli -o json -x -s http://$HA_HOST:8123 --token $token template <(echo "$details")
+fi
 
 ###########################################################
 # example uses:
