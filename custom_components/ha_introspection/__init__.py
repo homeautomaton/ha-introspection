@@ -33,7 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         stmt = ""
         limit = 2550
 
-        if ATTR_LIMITT in call.data:
+        if ATTR_LIMIT in call.data:
             limit = call.data[ATTR_LIMIT]
 
         limit = int((limit + 254) / 255)

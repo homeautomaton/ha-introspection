@@ -1,6 +1,11 @@
 HA_HOST="$1"
 token="$2"
 
+if [ "$3" = "" ]
+then
+    echo "usage: introspect.sh <HA-HOST> <HA-TOKEN> 'python expression'"
+    exit
+fi
 
 # introspect.sh
 # simple example of using the ha_introspection custom_component
@@ -20,11 +25,14 @@ def fmt(a):
         result += str(n) + '\n'
     return result
 "
-expr=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e "s/,/\\\,/g" <<<"$3" )
-lib=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e "s/,/\\\,/g" <<<"$lib" )
+
+expr=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/"/\\\"/g' -e "s/,/\\\,/g" <<<"$3" )
+lib=$( sed -e 's/\\/\\\\/g' -e "s/'/\\\'/g" -e 's/"/\\\"/g' -e "s/,/\\\,/g" <<<"$lib" )
+
 fetch="{% for i in range(1+states.introspection.len.state|int) %}{{  states.introspection['result_' ~ i]['state'] }}{% endfor %}"
 
 hass-cli -o json -x -s http://$HA_HOST:8123 --token $token service call ha_introspection.do_introspection --arguments statement="$lib",expression="$expr" >/dev/null
+[ "$?" = "0" ] || exit
 hass-cli -o json -x -s http://$HA_HOST:8123 --token $token template <(echo "$fetch")
 
 
