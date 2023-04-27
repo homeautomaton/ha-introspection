@@ -1,6 +1,7 @@
 #!/usr/local/opt/python@3.8/bin/python3.8
 import os
 import sys
+import re
 import logging
 from typing import List, Optional, Union, cast
 
@@ -28,25 +29,22 @@ pass_context = click.make_pass_decorator(  # pylint: disable=invalid-name
 
 def lib():
      return """
-def no_(a):
-    return [ e for e in a if not e.startswith('_') ]
-
-def head(a,cnt=20):
-    return a[:cnt]
-
-def fmt(a):
-    result=''
-    for n in a:
-        result += str(n) + '\\n'
-    return result
-
 def explore(path):
     import json
+    printables = ["<class '" + n + "'>" for n in ("str","bool","int","dict","set")]
+    def fmt(s):
+        s=str(s)
+        if len(s) > 210:
+            return(s[:200] + "...")
+        return(s)
     t = str(type(path))
     if t == "<class 'dict'>":
-        d = [ (e,str(type(path.get(e)))) for e in path.keys() ]
+        d = [ (e, str(type(path.get(e))), fmt( path.get(e) ) if str(type(path.get(e))) in printables else "" ) for e in path.keys() ]
+    elif t in ("<class 'list'>","<class 'set'>","<class 'itertools.chain'>"):
+        path=list(path)
+        d = [ ('['+str(e)+']', str(type(path[e])), fmt( path[e] ) if str(type(path[e])) in printables else "" ) for e in range(len(path)) ]
     else:
-        d = [ (e,str(type(getattr(path,e)))) for e in dir(path) if not str(e).startswith('_') ]
+        d = [ (e, str(type(getattr(path,e))), fmt( getattr(path,e) ) if str(type(getattr(path,e))) in printables else "" ) for e in dir(path) if not str(e).startswith('_') ]
     result = json.dumps({ 'type' : t, 'dir': d })
     with open("/tmp/explore.txt", "w") as file:
         file.write(result) 
@@ -58,6 +56,14 @@ def more(offset):
         result = file.read()
     return result[offset:offset+2550]
 """
+def getwidths( a ):
+    w=[0,0,0]
+    for e in a:
+       for i in range(3):
+           if len(str(e[i])) > w[i]: w[i] = len(str(e[i]))
+    w[2] = 190 - w[1] - w[0]
+    if w[2] < 50: w[2] = 50
+    return w
 
 def run() -> None:
     """Run entry point.
@@ -72,7 +78,6 @@ def run() -> None:
         result = cli.main(standalone_mode=False)
         if isinstance(result, int):
             sys.exit(result)
-
     # Exception handling below is done to use logger
     # and mimick as close as possible what click would
     # do normally in its main()
@@ -92,6 +97,7 @@ def _default_token() -> Optional[str]:
     return os.environ.get('HASS_TOKEN', os.environ.get('HASSIO_TOKEN', None))
 
 @click.command(context_settings=CONTEXT_SETTINGS)
+@click.argument('path', required=False)
 
 @click.option(
     '--server',
@@ -145,7 +151,26 @@ def _default_token() -> Optional[str]:
         ' Be careful!'
     ),
 )
-
+@click.option(
+    '--interactive',
+    '-i',
+    is_flag=True,
+    default=False,
+    help=(
+        'Interactive.'
+        ' Continue in interactive mode after output of initial path on command-line.'
+    ),
+)
+@click.option(
+    '--verbose',
+    '-v',
+    is_flag=True,
+    default=False,
+    help=(
+        'Verbose.'
+        ' Give verbose output.'
+    ),
+)
 
 @pass_context
 def cli(
@@ -156,6 +181,9 @@ def cli(
     timeout: int,
     insecure: bool,
     cert: str,
+    path: Optional[str],
+    interactive: bool,
+    verbose: bool,
 ) -> None:
     """Explore for Home Assistant."""
     ctx.server = server
@@ -164,50 +192,90 @@ def cli(
     ctx.timeout = timeout
     ctx.insecure = insecure
     ctx.cert = cert
+    ctx.path = path
+    ctx.interactive = True if not path else interactive
+    ctx.verbose = True if not path else interactive
 
-    path = [ { 'n':'hass', 't':'class' } ]
+    if path:
+        parts = re.split(r'(\[|\.)', path)
+        path = []
+        p = [ parts[0] ] + [ e[1:] if e[0] == '.' else e for e in ["".join(parts[i:i+2]) for i in range(1, len(parts), 2)] ]
+        for i in range(len(p)):
+            path.append( {'n' : p[i], 't': "<class 'homeassistant.core.HomeAssistant'>" } )
+            if i > 0:
+                if p[i].endswith(']'):
+                    path[i-1]['t'] = "<class 'list'>"
+                elif p[i].startswith('get('):
+                    path[i]['n'] = p[i][5:-2]
+                    path[i-1]['t'] = "<class 'dict'>"
+                else:
+                    path[i-1]['t'] = "class"
+    else:
+        path = [ { 'n':'hass', 't':"<class 'homeassistant.core.HomeAssistant'>" } ]
+
     while True:
+        if verbose: print(repr(path))
         prior=""
         p=""
         for e in path:
-            if prior == "":
+            if e['n'].startswith('['):
+                p = 'list(' + p + ')'
+                p += e['n']
+            elif prior == "":
                 p += e['n']
             elif prior == "<class 'dict'>":
                 p += ".get('" + e['n'] + "')"
             else:
                 p += "." + e['n'] + ""
             prior = e['t']
-        print(p)
 
+        if verbose:
+            print("send ----> " + p )
         api.call_service(ctx,'ha_introspection','do_introspection',{'statement':lib(), 'expression':'explore(' + p + ')'})
         part = api.render_template(ctx, "|{% for i in range(1+states.introspection.len.state|int) %}{{ states.introspection['result_' ~ i]['state'] }}{% endfor %}", {})[1:]
         output = ""
-        x = ""
         while part != '' and part != '<none>':
             output += part
-            x += part + "\n\n"
             api.call_service(ctx,'ha_introspection','do_introspection',{'statement':lib(), 'expression':'more(' + str(len(output)) + ')'})
             part = api.render_template(ctx, "|{% for i in range(1+states.introspection.len.state|int) %}{{ states.introspection['result_' ~ i]['state'] }}{% endfor %}", {})[1:]
 
-        print(x)
         map = {}
         if output.startswith("{"):
             resp = json.loads(output)
             print("")
             print(p + " " + resp[ 'type' ])
+            (w0,w1,w2) = getwidths( resp['dir'] )
             for d in resp['dir']:
-                print( "    " + str(d) )
-                map[ d[0] ] = d[1]
+                d2 = d[2][:w2] + "..." if len(d[2]) > w2 - 5 else d[2]
+                print(f"     {str(d[0]):<{w0}} {str(d[1]):<{w1}} {str(d2):<{w2}}")
+                map[ str(d[0]) ] = d[1]
         else:
             print(output)
-        s = input(p+'> ')
-        if s == '..':
-            if len(path) > 1: 
-                path = path [:-1]
-        elif s in map:
-            path.append( { 'n' : s, 't': map[s] } )
-        else:
-            print("Not found")
+        if not ctx.interactive: break
+        s=""
+        while True:
+            s = input(p+'> ')
+            if s == '.':
+                break
+            elif s == '..':
+                if len(path) > 1: 
+                    path = path [:-1]
+                else:
+                    path=[ { 'n' : 'hass', 't': "<class 'homeassistant.core.HomeAssistant'>" } ]
+                break
+            elif s == 'globals()':
+                path=[ { 'n' : s, 't': "<class 'dict'>" } ]
+                break
+            elif s in map:
+                path.append( { 'n' : s, 't': map[s] } )
+                break
+            elif s.replace('()','') in map:
+                path.append( { 'n' : s, 't': map[s.replace('()','')] } )
+                break
+            elif s == '':
+                pass
+            else:
+                print("Not found")
 
 if __name__ == '__main__':
     run()
