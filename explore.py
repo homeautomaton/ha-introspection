@@ -238,26 +238,36 @@ def cli(
     while True:
         if verbose: print(repr(path))
         prior=""
-        p=""
+        p = [""]
+        pn = 0
         prompt=""
         for e in path:
             if e['n'].startswith('?'):
-                p = "list( filter( " + e['n'][1:].replace('%5b','[').replace('%5d',']').replace('%2e','.') + "," + p + ") )"
+                p[ pn ] = "list( filter( " + e['n'][1:].replace('%5b','[').replace('%5d',']').replace('%2e','.') + "," + p[ pn ] + ") )"
                 prompt += e['n']
             elif e['n'].startswith('['):
-                p = 'list(' + p + ')'
-                p += e['n']
-                prompt += e['n']
+                p[ pn ] = 'list(' + p[ pn ] + ')'
+                if e['n'] == '[*]':
+                    pn += 1
+                    p.append("")
+                else:
+                    p[ pn ] += e['n']
+                    prompt += e['n']
             elif prior == "":
-                p += e['n']
+                p[ pn ] += e['n']
                 prompt += e['n']
             elif prior == "<class 'dict'>":
-                p += ".get('" + e['n'] + "')"
+                p[ pn ] += ".get('" + e['n'] + "')"
                 prompt += "." + e['n']
             else:
-                p += "." + e['n']
+                p[ pn ] += "." + e['n']
                 prompt += "." + e['n']
             prior = e['t']
+
+        if pn > 0:
+            p = '[ e' + p[1] + ' for e in ' + p[0] + ']'
+        else:
+            p = p[ 0 ]
 
         if verbose:
             print("send ----> " + p )
