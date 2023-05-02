@@ -21,6 +21,11 @@ fi
 # define your own library functions on the fly:
 lib="
 import inspect
+import sys
+import os
+import importlib
+global get
+get = lambda  d, e : d[e] if str(type(d)) in (\"<class 'dict'>\") else d.as_dict()[e] if 'as_dict' in dir(d) else getattr(d,e)
 def no_(a): 
     return [ e for e in a if not e.startswith('_') ]
 

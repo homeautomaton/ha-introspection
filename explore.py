@@ -30,14 +30,19 @@ pass_context = click.make_pass_decorator(  # pylint: disable=invalid-name
 
 
 def lib():
-     return """
+    return """
+
+global get
+get = lambda  d, e : d[e] if str(type(d)) in ("<class 'dict'>") else d.as_dict()[e] if 'as_dict' in dir(d) else getattr(d,e)
+
 def explore( name, path ):
     import json
     global explore_result_text
 
+
     explore_result_text = ""
     try:
-        printables = ["<class '" + n + "'>" for n in ("str","bool","int","dict","set")]
+        printables = ["<class '" + n + "'>" for n in ("str","bool","int","dict","set","dict_items")]
         def fmt(s):
             s=str(s)
             if len(s) > 210:
@@ -53,19 +58,6 @@ def explore( name, path ):
             d = [ ('['+str(e)+']', str(type(path[e])), fmt( path[e] ) if str(type(path[e])) in printables else "" ) for e in range(len(path)) ]
         else:
             d = [ (e, str(type(getattr(path,e))), fmt( getattr(path,e) ) if str(type(getattr(path,e))) in printables else "" ) for e in dir(path) if not str(e).startswith('_') and str(e) != 'attribute_value' ]
-            #d = []
-            #for e in dir(path):
-            #    if not str(e).startswith('_'):
-            #        m = [ e, None, None ]
-            #        try:
-            #            m[ 1 ] = str(type(getattr(path,e)))
-            #        except Exception as ex:  # pylint: disable=broad-except
-            #            m[ 1 ] = '<error>'
-            #        try:
-            #            m[ 2 ] = fmt( getattr(path,e) ) if str(type(getattr(path,e))) in printables else ""
-            #        except Exception as ex:  # pylint: disable=broad-except
-            #            m[ 2 ] = '<error>'
-            #        d.append( m )
         explore_result_text = json.dumps({ 'type' : t, 'dir': d })
     except Exception as ex:  # pylint: disable=broad-except
         explore_result_text = json.dumps({ 'exception' : str(ex) })
@@ -238,36 +230,42 @@ def cli(
     while True:
         if verbose: print(repr(path))
         prior=""
-        p = [""]
-        pn = 0
+        filters = [""]
+        filter_num = 0
         prompt=""
+
+        i = 0
         for e in path:
             if e['n'].startswith('?'):
-                p[ pn ] = "list( filter( " + e['n'][1:].replace('%5b','[').replace('%5d',']').replace('%2e','.') + "," + p[ pn ] + ") )"
+                filters[ filter_num ] = "list( filter( " + e['n'][1:].replace('%5b','[').replace('%5d',']').replace('%2e','.') + "," + filters[ filter_num - 1 ] + ") )"
                 prompt += e['n']
             elif e['n'].startswith('['):
-                p[ pn ] = 'list(' + p[ pn ] + ')'
+                filters[ filter_num ] = 'list(' + filters[ filter_num ] + ')'
                 if e['n'] == '[*]':
-                    pn += 1
-                    p.append("")
+                    if i == len(path) - 1:
+                        filters[ filter_num ] += '[0]'
+                    else:
+                        filter_num += 1
+                        filters.append("")
                 else:
-                    p[ pn ] += e['n']
-                    prompt += e['n']
+                    filters[ filter_num ] += e['n']
+                prompt += e['n']
             elif prior == "":
-                p[ pn ] += e['n']
+                filters[ filter_num ] += e['n']
                 prompt += e['n']
             elif prior == "<class 'dict'>":
-                p[ pn ] += ".get('" + e['n'] + "')"
-                prompt += "." + e['n']
+                filters[ filter_num ] += ".get('" + e['n'] + "')"
+                prompt += ".get('" + e['n'] + "')"
             else:
-                p[ pn ] += "." + e['n']
+                filters[ filter_num ] += "." + e['n']
                 prompt += "." + e['n']
             prior = e['t']
+            i += 1
 
-        if pn > 0:
-            p = '[ e' + p[1] + ' for e in ' + p[0] + ']'
+        if filter_num > 0:
+            p = '[ e ' + filters[1] + ' for e in ' + filters[0] + ']'
         else:
-            p = p[ 0 ]
+            p = filters[ 0 ]
 
         if verbose:
             print("send ----> " + p )
@@ -277,6 +275,7 @@ def cli(
         output = ""
         while part != '' and part != '<none>':
             output += part
+            if output == '' or output[0] != '{': break
             api.call_service(ctx,'ha_introspection','do_introspection',{'statement':lib(), 'expression':'more(' + str(len(output)) + ')'})
             part = api.render_template(ctx, "|{% for i in range(1+states.introspection.len.state|int) %}{{ states.introspection['result_' ~ i]['state'] }}{% endfor %}", {})[1:]
 
@@ -298,7 +297,7 @@ def cli(
         if not ctx.interactive: break
         s=""
         while True:
-            s = input(prompt+'> ')
+            s = input(prompt + '> ')
             if s == '':
                 pass
             elif s == '.':
@@ -308,6 +307,12 @@ def cli(
                     path = path [:-1]
                 else:
                     path=[ { 'n' : 'hass', 't': "<class 'homeassistant.core.HomeAssistant'>" } ]
+                break
+            elif s[0] == '?':
+                path.append( {'n': s, 't': 'class'} )
+                break
+            elif s[0] == '[':
+                path.append( {'n': s, 't': 'class'} )
                 break
             elif s == 'globals()':
                 path=[ { 'n' : s, 't': "<class 'dict'>" } ]
@@ -320,6 +325,7 @@ def cli(
                 break
             else:
                 print("Not found")
+        # print( path )
 
 if __name__ == '__main__':
     run()
